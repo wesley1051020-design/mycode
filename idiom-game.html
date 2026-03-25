@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>成語手寫大挑戰 - 穩定辨識版</title>
+    <style>
+        :root { --main-purple: #9c27b0; --bg: #fdf6ff; --correct: #4caf50; --wrong: #f44336; }
+        body { font-family: "Microsoft JhengHei", sans-serif; background-color: var(--bg); display: flex; flex-direction: column; align-items: center; padding: 20px; margin: 0; }
+        .game-container { background: white; padding: 25px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; width: 95%; max-width: 450px; display: none; }
+        .start-screen { text-align: center; margin-top: 100px; }
+        .header-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; font-weight: bold; color: #666; }
+        .idiom-box { font-size: 3rem; margin: 10px 0; letter-spacing: 5px; font-weight: 900; color: #333; }
+        .blank { color: #ff4081; border-bottom: 5px solid #ff4081; padding: 0 5px; min-width: 60px; display: inline-block; }
+        #status { height: 40px; font-size: 1.1rem; font-weight: bold; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; }
+        #canvas { border: 4px solid #eee; background: #fff; touch-action: none; border-radius: 15px; cursor: crosshair; box-shadow: inset 0 0 10px rgba(0,0,0,0.05); }
+        .controls { margin-top: 20px; display: flex; gap: 10px; }
+        button { flex: 1; padding: 15px; border-radius: 12px; border: none; font-size: 1.1rem; font-weight: bold; cursor: pointer; }
+        .btn-start { background: var(--main-purple); color: white; width: 200px; }
+        .btn-clear { background: #eee; color: #666; }
+        .btn-next { background: #ccc; color: white; cursor: not-allowed; }
+        .btn-next.active { background: #ff9800; cursor: pointer; animation: pulse 1s infinite; }
+        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+    </style>
+</head>
+<body>
+
+<div class="start-screen" id="startScreen">
+    <h1>📝 成語手寫挑戰</h1>
+    <p>穩定辨識版：寫完停頓一秒即檢查</p>
+    <button class="btn-start" onclick="startGame()">開始闖關</button>
+</div>
+
+<div class="game-container" id="gameContainer">
+    <div class="header-info">
+        <span>第 <span id="lv">1</span> / 34 題</span>
+        <span id="time" style="color:var(--main-purple)">00:00</span>
+    </div>
+    <div id="status">請在下方格內寫字</div>
+    <div class="idiom-box" id="idiomDisplay"></div>
+    <canvas id="canvas" width="320" height="320"></canvas>
+    <div class="controls">
+        <button class="btn-clear" onclick="resetCanvas()">重寫</button>
+        <button class="btn-next" id="nextBtn" onclick="goToNext()">下一關 ➔</button>
+    </div>
+</div>
+
+<script>
+    const data = [
+        {q:"日_如梭", a:"月"}, {q:"風_草動", a:"吹"}, {q:"咬_牙關", a:"緊"}, {q:"莫_其妙", a:"名"},
+        {q:"九_一生", a:"死"}, {q:"異_天開", a:"想"}, {q:"愛_及烏", a:"屋"}, {q:"守_相助", a:"望"},
+        {q:"良_苦口", a:"藥"}, {q:"花_錦簇", a:"團"}, {q:"三_六婆", a:"姑"}, {q:"明_秋毫", a:"察"},
+        {q:"東_事發", a:"窗"}, {q:"胡_非為", a:"作"}, {q:"心_口快", a:"直"}, {q:"有_有終", a:"始"},
+        {q:"一_道破", a:"語"}, {q:"天_地設", a:"造"}, {q:"聚_成塔", a:"沙"}, {q:"枉_心機", a:"費"},
+        {q:"杯_狼藉", a:"盤"}, {q:"三_而行", a:"思"}, {q:"心_意足", a:"滿"}, {q:"循_漸進", a:"序"},
+        {q:"烏_瘴氣", a:"煙"}, {q:"投_取巧", a:"機"}, {q:"不_邊幅", a:"修"}, {q:"按_就班", a:"部"},
+        {q:"入_三分", a:"木"}, {q:"相_如實", a:"當"}, {q:"井_之蛙", a:"底"}, {q:"化_為夷", a:"險"},
+        {q:"七_八落", a:"零"}, {q:"得_進尺", a:"寸"}
+    ];
+
+    let index = 0, sec = 0, timer, strokes = [], autoCheckTimer;
+    const canvas = document.getElementById('canvas'), ctx = canvas.getContext('2d');
+    let isDrawing = false;
+
+    ctx.lineWidth = 12; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#333';
+
+    function getXY(e) {
+        const r = canvas.getBoundingClientRect();
+        const c = e.touches ? e.touches[0] : e;
+        return [Math.round(c.clientX - r.left), Math.round(c.clientY - r.top)];
+    }
+
+    const start = (e) => {
+        isDrawing = true;
+        const [x, y] = getXY(e);
+        ctx.beginPath(); ctx.moveTo(x, y);
+        strokes.push([x], [y], [Date.now()]); // Google API 需要的格式初步
+        clearTimeout(autoCheckTimer);
+    };
+
+    const move = (e) => {
+        if (!isDrawing) return;
+        const [x, y] = getXY(e);
+        ctx.lineTo(x, y); ctx.stroke();
+        // 修正格式：strokes[strokes.length-3] 是 X 陣列, -2 是 Y, -1 是時間
+        strokes[strokes.length - 3].push(x);
+        strokes[strokes.length - 2].push(y);
+        strokes[strokes.length - 1].push(Date.now());
+        if (e.cancelable) e.preventDefault();
+    };
+
+    const stop = () => { if (isDrawing) { isDrawing = false; autoCheckTimer = setTimeout(recognize, 1000); } };
+
+    canvas.addEventListener('mousedown', start);
+    canvas.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', stop);
+    canvas.addEventListener('touchstart', start, { passive: false });
+    canvas.addEventListener('touchmove', move, { passive: false });
+    canvas.addEventListener('touchend', stop);
+
+    async function recognize() {
+        if (strokes.length === 0) return;
+        document.getElementById('status').innerHTML = '<span style="color:#aaa">辨識中...</span>';
+
+        // 格式轉換：Google 期待 [[[x1,x2],[y1,y2],[t1,t2]], [[x1...]]]
+        const formattedStrokes = [];
+        for (let i = 0; i < strokes.length; i += 3) {
+            formattedStrokes.push([strokes[i], strokes[i+1], strokes[i+2]]);
+        }
+
+        try {
+            const res = await fetch('https://www.google.com.tw/inputtools/request?ime=handwriting&app=autofill&hl=zh-TW', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    options: 'enable_pre_space',
+                    requests: [{
+                        writing_guide: { writing_area_width: 320, writing_area_height: 320 },
+                        ink: formattedStrokes,
+                        language: 'zh-Hant'
+                    }]
+                })
+            });
+            const result = await res.json();
+            if (result[0] !== 'SUCCESS') throw new Error();
+
+            const candidates = result[1][0][1];
+            const target = data[index].a;
+
+            if (candidates.includes(target)) {
+                document.getElementById('status').innerHTML = '<span style="color:var(--correct)">✅ 正確！請按下一關</span>';
+                document.getElementById('nextBtn').classList.add('active');
+            } else {
+                document.getElementById('status').innerHTML = '<span style="color:var(--wrong)">❌ 辨識為「'+candidates[0]+'」，再試試</span>';
+            }
+        } catch (e) {
+            document.getElementById('status').innerHTML = '<span style="color:red">辨識失敗，請檢查網路連線</span>';
+        }
+    }
+
+    function startGame() {
+        document.getElementById('startScreen').style.display = 'none';
+        document.getElementById('gameContainer').style.display = 'block';
+        loadLv();
+        timer = setInterval(() => {
+            sec++;
+            const m = String(Math.floor(sec/60)).padStart(2,'0');
+            const s = String(sec%60).padStart(2,'0');
+            document.getElementById('time').innerText = `${m}:${s}`;
+        }, 1000);
+    }
+
+    function loadLv() {
+        document.getElementById('idiomDisplay').innerHTML = data[index].q.replace('_', '<span class="blank">?</span>');
+        document.getElementById('lv').innerText = index + 1;
+        resetCanvas();
+    }
+
+    function resetCanvas() {
+        ctx.clearRect(0,0,320,320); strokes = [];
+        document.getElementById('status').innerText = "請在下方寫出答案";
+        document.getElementById('nextBtn').classList.remove('active');
+    }
+
+    function goToNext() {
+        if (!document.getElementById('nextBtn').classList.contains('active')) return;
+        if (index < data.length - 1) { index++; loadLv(); } 
+        else { clearInterval(timer); alert("恭喜全數破關！"); location.reload(); }
+    }
+</script>
+</body>
+</html>
